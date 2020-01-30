@@ -1,5 +1,5 @@
 cpuFanManager:
-		gcc -Wall -o cpuFanManager cpuFanManager.c -lwiringPi
+		gcc -Wall -o cpufm cpuFanManager.c -lwiringPi
 
 clean:
-	rm cpuFanManager
+	rm cpufm

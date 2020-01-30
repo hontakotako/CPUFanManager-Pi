@@ -1,5 +1,5 @@
 // raspberryPi CPU CoolingFan Power Manager
-// 2018 hontako
+// 2018-2020 hontako
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,82 +7,112 @@
 #include <wiringPi.h>
 
 #define BUF_SIZE 10
+// "1" is wiringPi pinID. Physical pinNo is 12.
 #define CPUFAN_PINID 1
 #define FP_OFFSET_TOP 0
 
-volatile sig_atomic_t signalFlag = 0;
+#define CPUTEMP_HIGH 45000
+#define CPUTEMP_MID 40000
+
+// #define USE_PWM
+
+volatile sig_atomic_t abortFlag = 0;
 
 void abort_handler( int signal )
 {
-	signalFlag = 1;
+	abortFlag = 1;
+}
+
+void initGPIO( void )
+{
+    wiringPiSetup();
+#ifdef USE_PWM
+    pinMode( CPUFAN_PINID , PWM_OUTPUT );
+	pwmSetMode( PWM_MODE_BAL );
+	pwmSetClock( 1 );
+	pwmSetRange( 1024 );
+#else
+    pinMode( CPUFAN_PINID , OUTPUT );
+#endif
+}
+
+void controlCPUFan( int cpuTemp )
+{
+#ifdef USE_PWM
+	if( cpuTemp > CPUTEMP_HIGH )
+	{
+		pwmWrite( 1 , 1023 );
+	}
+	else if( cpuTemp > CPUTEMP_MID )
+	{
+		pwmWrite( 1 , 850 );
+	}
+	else
+	{
+		pwmWrite( 1 , 0 );
+	}
+#else
+    if( cpuTemp > CPUTEMP_HIGH )
+    {
+        digitalWrite( CPUFAN_PINID , HIGH );
+    }
+    else
+    {
+        digitalWrite( CPUFAN_PINID , LOW );
+    }
+#endif
 }
 
 int main( void )
 {
 	FILE *fp;
-	const char *filename = "/sys/class/thermal/thermal_zone0/temp";
-	char buf[BUF_SIZE+1];
+	const char *tempFileName = "/sys/class/thermal/thermal_zone0/temp";
+	char strbuf[BUF_SIZE+1];
 
-	wiringPiSetup();
-	pinMode( CPUFAN_PINID , PWM_OUTPUT );
-	pwmSetMode( PWM_MODE_BAL );
-	pwmSetClock( 1 );
-	pwmSetRange( 1024 );
+	initGPIO();
 
-	fp = fopen( filename , "r" );
+	fp = fopen( tempFileName , "r" );
 	if( fp == NULL )
 	{
-		printf( "System temp file open failed...\n" );
+		printf( "[ERROR]CPUTemp System file open failed...\n" );
+		printf( "Can you access and reading the this file?: /sys/class/thermal/thermal_zone0/temp" );
 		return EXIT_FAILURE;
 	}
 
 	if( signal( SIGINT , abort_handler ) == SIG_ERR )
 	{
-		printf( "Signal handler regist failed...\n" );
+		printf( "[ERROR]Signal handler regist failed...\n" );
+		printf( "Please restart this program after some time.\n" );
 		return EXIT_FAILURE;
 	}
 
+#ifdef USE_PWM
 	pwmWrite( 1 , 1023 );
+#endif
 	delay( 2000 );
 
-	while( !signalFlag )
+    // Mainloop
+	while( !abortFlag )
 	{
 		int rc;
 		int cpuTemp;
 
-		rc = fread( buf , 1 , BUF_SIZE , fp );
+		rc = fread( strbuf , 1 , BUF_SIZE , fp );
 		fseek( fp ,  FP_OFFSET_TOP , SEEK_SET );
-		if( rc == 0 )
+		if( rc != 0 )
 		{
-			printf( "notiong read data.\n" );
+			strbuf[rc] = '\0';
+			// printf( "[DEBUG]CPUTEMP:%s\n" , strbuf );
+			sscanf( strbuf , "%d" , &cpuTemp );
 		}
-		else
+		/*else
 		{
-			buf[rc] = '\0';
-			printf( "CPUTEMP:%s\n" , buf );
-			sscanf( buf , "%d" , &cpuTemp );
-		}
+		    printf( "[DEBUG]notiong read data.\n" );
+		}*/
 
-		if( cpuTemp > 45000 )
-		{
-			// digitalWrite(  CPUFAN_PINID , HIGH );
-			pwmWrite( 1 , 1023 );
-		}
-		else if( cpuTemp > 40000 )
-		{
-			// digitalWrite(  CPUFAN_PINID , LOW );
-			pwmWrite( 1 , 850 );
-		}
-		else
-		{
-			pwmWrite( 1 , 512 );
-		}
+        controlCPUFan( cpuTemp );
 
 		delay( 10000 );
-		/*digitalWrite(  CPUFAN_PINID , HIGH );
-		delay( 500 );
-		digitalWrite(  CPUFAN_PINID , LOW );
-		delay( 500 );*/
 	}
 
 	fclose( fp );
